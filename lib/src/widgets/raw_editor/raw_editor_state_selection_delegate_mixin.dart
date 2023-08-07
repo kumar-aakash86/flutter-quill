@@ -3,7 +3,10 @@ import 'dart:math' as math;
 import 'package:flutter/rendering.dart';
 import 'package:flutter/widgets.dart';
 
+import '../../models/documents/document.dart';
+import '../../models/documents/nodes/embeddable.dart';
 import '../../models/documents/nodes/leaf.dart';
+import '../../models/documents/style.dart';
 import '../../utils/delta.dart';
 import '../editor.dart';
 
@@ -14,40 +17,61 @@ mixin RawEditorStateSelectionDelegateMixin on EditorState
     return widget.controller.plainTextEditingValue;
   }
 
-  @override
   set textEditingValue(TextEditingValue value) {
     final cursorPosition = value.selection.extentOffset;
     final oldText = widget.controller.document.toPlainText();
     final newText = value.text;
     final diff = getDiff(oldText, newText, cursorPosition);
-    final insertedText = _adjustInsertedText(diff.inserted);
+    if (diff.deleted == '' && diff.inserted == '') {
+      // Only changing selection range
+      widget.controller.updateSelection(value.selection, ChangeSource.LOCAL);
+      return;
+    }
+
+    var insertedText = diff.inserted;
+    final containsEmbed =
+        insertedText.codeUnits.contains(Embed.kObjectReplacementInt);
+    insertedText =
+        containsEmbed ? _adjustInsertedText(diff.inserted) : diff.inserted;
 
     widget.controller.replaceText(
         diff.start, diff.deleted.length, insertedText, value.selection);
 
-    if (insertedText == pastePlainText && pastePlainText != '') {
-      final pos = diff.start;
-      for (var i = 0; i < pasteStyle.length; i++) {
-        final offset = pasteStyle[i].item1;
-        final style = pasteStyle[i].item2;
-        widget.controller.formatTextStyle(
-            pos + offset,
-            i == pasteStyle.length - 1
-                ? pastePlainText.length - offset
-                : pasteStyle[i + 1].item1,
-            style);
+    _applyPasteStyleAndEmbed(insertedText, diff.start, containsEmbed);
+  }
+
+  void _applyPasteStyleAndEmbed(
+      String insertedText, int start, bool containsEmbed) {
+    if (insertedText == pastePlainText && pastePlainText != '' ||
+        containsEmbed) {
+      final pos = start;
+      for (var i = 0; i < pasteStyleAndEmbed.length; i++) {
+        final offset = pasteStyleAndEmbed[i].offset;
+        final styleAndEmbed = pasteStyleAndEmbed[i].value;
+
+        final local = pos + offset;
+        if (styleAndEmbed is Embeddable) {
+          widget.controller.replaceText(local, 0, styleAndEmbed, null);
+        } else {
+          final style = styleAndEmbed as Style;
+          if (style.isInline) {
+            widget.controller
+                .formatTextStyle(local, pasteStyleAndEmbed[i].length!, style);
+          } else if (style.isBlock) {
+            final node = widget.controller.document.queryChild(local).node;
+            if (node != null &&
+                pasteStyleAndEmbed[i].length == node.length - 1) {
+              style.values.forEach((attribute) {
+                widget.controller.document.format(local, 0, attribute);
+              });
+            }
+          }
+        }
       }
     }
   }
 
   String _adjustInsertedText(String text) {
-    // For clip from editor, it may contain image, a.k.a 65532 or '\uFFFC'.
-    // For clip from browser, image is directly ignore.
-    // Here we skip image when pasting.
-    if (!text.codeUnits.contains(Embed.kObjectReplacementInt)) {
-      return text;
-    }
-
     final sb = StringBuffer();
     for (var i = 0; i < text.length; i++) {
       if (text.codeUnitAt(i) == Embed.kObjectReplacementInt) {
@@ -60,13 +84,17 @@ mixin RawEditorStateSelectionDelegateMixin on EditorState
 
   @override
   void bringIntoView(TextPosition position) {
-    final localRect = renderEditor.getLocalRectForCaret(position);
-    final targetOffset = _getOffsetToRevealCaret(localRect, position);
+    // Ignore errors if position is invalid (i.e. paste on iOS when editor
+    // has no content and user pasted from toolbar)
+    try {
+      final localRect = renderEditor.getLocalRectForCaret(position);
+      final targetOffset = _getOffsetToRevealCaret(localRect, position);
 
-    if (scrollController.hasClients) {
-      scrollController.jumpTo(targetOffset.offset);
-    }
-    renderEditor.showOnScreen(rect: targetOffset.rect);
+      if (scrollController.hasClients) {
+        scrollController.jumpTo(targetOffset.offset);
+      }
+      renderEditor.showOnScreen(rect: targetOffset.rect);
+    } catch (_) {}
   }
 
   // Finds the closest scroll offset to the current scroll offset that fully
@@ -125,7 +153,7 @@ mixin RawEditorStateSelectionDelegateMixin on EditorState
   void hideToolbar([bool hideHandles = true]) {
     // If the toolbar is currently visible.
     if (selectionOverlay?.toolbar != null) {
-      selectionOverlay?.hideToolbar();
+      hideHandles ? selectionOverlay?.hide() : selectionOverlay?.hideToolbar();
     }
   }
 
@@ -136,14 +164,15 @@ mixin RawEditorStateSelectionDelegateMixin on EditorState
   }
 
   @override
-  bool get cutEnabled => widget.toolbarOptions.cut && !widget.readOnly;
+  bool get cutEnabled => widget.contextMenuBuilder != null && !widget.readOnly;
 
   @override
-  bool get copyEnabled => widget.toolbarOptions.copy;
+  bool get copyEnabled => widget.contextMenuBuilder != null;
 
   @override
-  bool get pasteEnabled => widget.toolbarOptions.paste && !widget.readOnly;
+  bool get pasteEnabled =>
+      widget.contextMenuBuilder != null && !widget.readOnly;
 
   @override
-  bool get selectAllEnabled => widget.toolbarOptions.selectAll;
+  bool get selectAllEnabled => widget.contextMenuBuilder != null;
 }

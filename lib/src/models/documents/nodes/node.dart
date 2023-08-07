@@ -1,5 +1,6 @@
 import 'dart:collection';
 
+import '../../../widgets/embeds.dart';
 import '../../quill_delta.dart';
 import '../attribute.dart';
 import '../style.dart';
@@ -101,13 +102,18 @@ abstract class Node extends LinkedListEntry<Node> {
     super.unlink();
   }
 
-  void adjust() {/* no-op */}
+  void adjust() {
+    /* no-op */
+  }
 
   /// abstract methods begin
 
   Node newInstance();
 
-  String toPlainText();
+  String toPlainText([
+    Iterable<EmbedBuilder>? embedBuilders,
+    EmbedBuilder? unknownEmbedBuilder,
+  ]);
 
   Delta toDelta();
 

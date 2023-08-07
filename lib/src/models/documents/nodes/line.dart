@@ -1,9 +1,10 @@
 import 'dart:math' as math;
 
 import 'package:collection/collection.dart';
-import 'package:tuple/tuple.dart';
 
+import '../../../widgets/embeds.dart';
 import '../../quill_delta.dart';
+import '../../structs/offset_value.dart';
 import '../attribute.dart';
 import '../style.dart';
 import 'block.dart';
@@ -65,7 +66,11 @@ class Line extends Container<Leaf?> {
   }
 
   @override
-  String toPlainText() => '${super.toPlainText()}\n';
+  String toPlainText([
+    Iterable<EmbedBuilder>? embedBuilders,
+    EmbedBuilder? unknownEmbedBuilder,
+  ]) =>
+      '${super.toPlainText(embedBuilders, unknownEmbedBuilder)}\n';
 
   @override
   String toString() {
@@ -129,12 +134,17 @@ class Line extends Container<Leaf?> {
     final isLineFormat = (index + local == thisLength) && local == 1;
 
     if (isLineFormat) {
-      assert(style.values.every((attr) => attr.scope == AttributeScope.BLOCK),
+      assert(
+          style.values.every((attr) =>
+              attr.scope == AttributeScope.BLOCK ||
+              attr.scope == AttributeScope.IGNORE),
           'It is not allowed to apply inline attributes to line itself.');
       _format(style);
     } else {
       // Otherwise forward to children as it's an inline format update.
-      assert(style.values.every((attr) => attr.scope == AttributeScope.INLINE));
+      assert(style.values.every((attr) =>
+          attr.scope == AttributeScope.INLINE ||
+          attr.scope == AttributeScope.IGNORE));
       assert(index + local != thisLength);
       super.retain(index, local, style);
     }
@@ -268,6 +278,7 @@ class Line extends Container<Leaf?> {
       unlink();
       block.insertAfter(this);
     } else {
+      /// need to split this block into two as [line] is in the middle.
       final before = block.clone() as Block;
       block.insertBefore(before);
 
@@ -375,7 +386,7 @@ class Line extends Container<Leaf?> {
     }
 
     final remaining = len - local;
-    if (remaining > 0) {
+    if (remaining > 0 && nextLine != null) {
       final rest = nextLine!.collectStyle(0, remaining);
       _handle(rest);
     }
@@ -384,35 +395,42 @@ class Line extends Container<Leaf?> {
   }
 
   /// Returns each node segment's offset in selection
-  /// with its corresponding style as a list
-  List<Tuple2<int, Style>> collectAllIndividualStyles(int offset, int len,
+  /// with its corresponding style or embed as a list
+  List<OffsetValue> collectAllIndividualStylesAndEmbed(int offset, int len,
       {int beg = 0}) {
     final local = math.min(length - offset, len);
-    final result = <Tuple2<int, Style>>[];
+    final result = <OffsetValue>[];
 
     final data = queryChild(offset, true);
     var node = data.node as Leaf?;
     if (node != null) {
       var pos = 0;
-      if (node is Text) {
-        pos = node.length - data.offset;
-        result.add(Tuple2(beg, node.style));
+      pos = node.length - data.offset;
+      if (node is Text && node.style.isNotEmpty) {
+        result.add(OffsetValue(beg, node.style, node.length));
+      } else if (node.value is Embeddable) {
+        result.add(OffsetValue(beg, node.value as Embeddable, node.length));
       }
       while (!node!.isLast && pos < local) {
         node = node.next as Leaf;
-        if (node is Text) {
-          result.add(Tuple2(pos + beg, node.style));
-          pos += node.length;
+        if (node is Text && node.style.isNotEmpty) {
+          result.add(OffsetValue(pos + beg, node.style, node.length));
+        } else if (node.value is Embeddable) {
+          result.add(
+              OffsetValue(pos + beg, node.value as Embeddable, node.length));
         }
+        pos += node.length;
+      }
+
+      if (style.isNotEmpty) {
+        result.add(OffsetValue(beg, style, pos));
       }
     }
 
-    // TODO: add line style and parent's block style
-
     final remaining = len - local;
-    if (remaining > 0) {
-      final rest =
-          nextLine!.collectAllIndividualStyles(0, remaining, beg: local);
+    if (remaining > 0 && nextLine != null) {
+      final rest = nextLine!
+          .collectAllIndividualStylesAndEmbed(0, remaining, beg: local + beg);
       result.addAll(rest);
     }
 
@@ -444,8 +462,46 @@ class Line extends Container<Leaf?> {
     }
 
     final remaining = len - local;
-    if (remaining > 0) {
+    if (remaining > 0 && nextLine != null) {
       final rest = nextLine!.collectAllStyles(0, remaining);
+      result.addAll(rest);
+    }
+
+    return result;
+  }
+
+  /// Returns all styles for any character within the specified text range.
+  List<OffsetValue<Style>> collectAllStylesWithOffsets(
+    int offset,
+    int len, {
+    int beg = 0,
+  }) {
+    final local = math.min(length - offset, len);
+    final result = <OffsetValue<Style>>[];
+
+    final data = queryChild(offset, true);
+    var node = data.node as Leaf?;
+    if (node != null) {
+      var pos = 0;
+      pos = node.length - data.offset;
+      result.add(OffsetValue(node.documentOffset, node.style, node.length));
+      while (!node!.isLast && pos < local) {
+        node = node.next as Leaf;
+        result.add(OffsetValue(node.documentOffset, node.style, node.length));
+        pos += node.length;
+      }
+    }
+
+    result.add(OffsetValue(documentOffset, style, length));
+    if (parent is Block) {
+      final block = parent as Block;
+      result.add(OffsetValue(block.documentOffset, block.style, block.length));
+    }
+
+    final remaining = len - local;
+    if (remaining > 0 && nextLine != null) {
+      final rest =
+          nextLine!.collectAllStylesWithOffsets(0, remaining, beg: local);
       result.addAll(rest);
     }
 
@@ -454,64 +510,52 @@ class Line extends Container<Leaf?> {
 
   /// Returns plain text within the specified text range.
   String getPlainText(int offset, int len) {
-    final res = _getPlainText(offset, len);
-    if (res.length == 1) {
-      final data = queryChild(offset, true);
-      final text = res.single.item2;
-      return text == Embed.kObjectReplacementCharacter
-          ? ''
-          : text.substring(data.offset, data.offset + len);
-    }
-
-    final total = <String>[];
-    // Adjust first node
-    final firstNodeLen = res[1].item1;
-    var text = res[0].item2;
-    if (text != Embed.kObjectReplacementCharacter) {
-      total.add(text.substring(text.length - firstNodeLen));
-    }
-
-    for (var i = 1; i < res.length - 1; i++) {
-      if (res[i].item2 != Embed.kObjectReplacementCharacter) {
-        total.add(res[i].item2);
-      }
-    }
-
-    // Adjust last node
-    final lastNodeLen = len - res[res.length - 1].item1;
-    text = res[res.length - 1].item2;
-    if (text != Embed.kObjectReplacementCharacter) {
-      total.add(text.substring(0, lastNodeLen));
-    }
-    return total.join();
+    final plainText = StringBuffer();
+    _getPlainText(offset, len, plainText);
+    return plainText.toString();
   }
 
-  List<Tuple2<int, String>> _getPlainText(int offset, int len, {int beg = 0}) {
-    final local = math.min(length - offset, len);
-    final result = <Tuple2<int, String>>[];
+  int _getNodeText(Leaf node, StringBuffer buffer, int offset, int remaining) {
+    final text = node.toPlainText();
+    if (text == Embed.kObjectReplacementCharacter) {
+      return remaining - node.length;
+    }
 
-    final data = queryChild(offset, true);
+    final end = math.min(offset + remaining, text.length);
+    buffer.write(text.substring(offset, end));
+    return remaining - (end - offset);
+  }
+
+  int _getPlainText(int offset, int len, StringBuffer plainText) {
+    var _len = len;
+    final data = queryChild(offset, false);
     var node = data.node as Leaf?;
-    if (node != null) {
-      var pos = node.length - data.offset;
-      result.add(Tuple2(beg, node.toPlainText()));
-      while (!node!.isLast && pos < local) {
-        node = node.next as Leaf;
-        result.add(Tuple2(pos + beg, node.toPlainText()));
-        pos += node.length;
+
+    while (_len > 0) {
+      if (node == null) {
+        // blank line
+        plainText.write('\n');
+        _len -= 1;
+      } else {
+        _len = _getNodeText(node, plainText, offset - node.offset, _len);
+
+        while (!node!.isLast && _len > 0) {
+          node = node.next as Leaf;
+          _len = _getNodeText(node, plainText, 0, _len);
+        }
+
+        if (_len > 0) {
+          // end of this line
+          plainText.write('\n');
+          _len -= 1;
+        }
+      }
+
+      if (_len > 0 && nextLine != null) {
+        _len = nextLine!._getPlainText(0, _len, plainText);
       }
     }
 
-    final remaining = len - local;
-    if (remaining > 0) {
-      final lastElem = result[result.length - 1];
-      result
-        ..removeLast()
-        ..add(Tuple2(lastElem.item1, '${lastElem.item2}\n'));
-      final rest = nextLine!._getPlainText(0, remaining, beg: local);
-      result.addAll(rest);
-    }
-
-    return result;
+    return _len;
   }
 }

@@ -1,11 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_quill/flutter_quill.dart';
 import 'package:image_picker/image_picker.dart';
 
-import '../../models/documents/nodes/embeddable.dart';
-import '../../models/themes/quill_dialog_theme.dart';
-import '../../models/themes/quill_icon_theme.dart';
-import '../controller.dart';
-import '../toolbar.dart';
+import '../embed_types.dart';
+import 'image_video_utils.dart';
 
 class VideoButton extends StatelessWidget {
   const VideoButton({
@@ -19,6 +17,8 @@ class VideoButton extends StatelessWidget {
     this.mediaPickSettingSelector,
     this.iconTheme,
     this.dialogTheme,
+    this.tooltip,
+    this.linkRegExp,
     Key? key,
   }) : super(key: key);
 
@@ -41,6 +41,10 @@ class VideoButton extends StatelessWidget {
 
   final QuillDialogTheme? dialogTheme;
 
+  final String? tooltip;
+
+  final RegExp? linkRegExp;
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -51,10 +55,12 @@ class VideoButton extends StatelessWidget {
 
     return QuillIconButton(
       icon: Icon(icon, size: iconSize, color: iconColor),
+      tooltip: tooltip,
       highlightElevation: 0,
       hoverElevation: 0,
       size: iconSize * 1.77,
       fillColor: iconFillColor,
+      borderRadius: iconTheme?.borderRadius ?? 2,
       onPressed: () => _onPressedHandler(context),
     );
   }

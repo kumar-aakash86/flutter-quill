@@ -1,9 +1,8 @@
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_quill/flutter_quill.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:youtube_player_flutter/youtube_player_flutter.dart';
-
-import '../../../flutter_quill.dart';
 
 class YoutubeVideoApp extends StatefulWidget {
   const YoutubeVideoApp(
@@ -44,7 +43,7 @@ class _YoutubeVideoAppState extends State<YoutubeVideoApp> {
               text: widget.videoUrl,
               style: defaultStyles.link,
               recognizer: TapGestureRecognizer()
-                ..onTap = () => launch(widget.videoUrl)),
+                ..onTap = () => launchUrl(Uri.parse(widget.videoUrl))),
         );
       }
 

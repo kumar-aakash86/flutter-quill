@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../models/documents/attribute.dart';
 import '../../models/documents/style.dart';
 import '../../models/themes/quill_icon_theme.dart';
+import '../../utils/widgets.dart';
 import '../controller.dart';
 import '../toolbar.dart';
 
@@ -15,6 +16,8 @@ class ToggleCheckListButton extends StatefulWidget {
     this.fillColor,
     this.childBuilder = defaultToggleStyleButtonBuilder,
     this.iconTheme,
+    this.afterButtonPressed,
+    this.tooltip,
     Key? key,
   }) : super(key: key);
 
@@ -30,6 +33,8 @@ class ToggleCheckListButton extends StatefulWidget {
   final Attribute attribute;
 
   final QuillIconTheme? iconTheme;
+  final VoidCallback? afterButtonPressed;
+  final String? tooltip;
 
   @override
   _ToggleCheckListButtonState createState() => _ToggleCheckListButtonState();
@@ -55,15 +60,20 @@ class _ToggleCheckListButtonState extends State<ToggleCheckListButton> {
   }
 
   bool _getIsToggled(Map<String, Attribute> attrs) {
-    if (widget.attribute.key == Attribute.list.key) {
-      final attribute = attrs[widget.attribute.key];
-      if (attribute == null) {
-        return false;
-      }
-      return attribute.value == widget.attribute.value ||
-          attribute.value == Attribute.checked.value;
+    var attribute = widget.controller.toolbarButtonToggler[Attribute.list.key];
+
+    if (attribute == null) {
+      attribute = attrs[Attribute.list.key];
+    } else {
+      // checkbox tapping causes controller.selection to go to offset 0
+      widget.controller.toolbarButtonToggler.remove(Attribute.list.key);
     }
-    return attrs.containsKey(widget.attribute.key);
+
+    if (attribute == null) {
+      return false;
+    }
+    return attribute.value == Attribute.unchecked.value ||
+        attribute.value == Attribute.checked.value;
   }
 
   @override
@@ -84,15 +94,19 @@ class _ToggleCheckListButtonState extends State<ToggleCheckListButton> {
 
   @override
   Widget build(BuildContext context) {
-    return widget.childBuilder(
-      context,
-      Attribute.unchecked,
-      widget.icon,
-      widget.fillColor,
-      _isToggled,
-      _toggleAttribute,
-      widget.iconSize,
-      widget.iconTheme,
+    return UtilityWidgets.maybeTooltip(
+      message: widget.tooltip,
+      child: widget.childBuilder(
+        context,
+        Attribute.unchecked,
+        widget.icon,
+        widget.fillColor,
+        _isToggled,
+        _toggleAttribute,
+        widget.afterButtonPressed,
+        widget.iconSize,
+        widget.iconTheme,
+      ),
     );
   }
 
